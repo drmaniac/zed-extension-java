@@ -7,7 +7,7 @@ use zed_extension_api::{
     set_language_server_installation_status,
 };
 
-use crate::util::{mark_checked_once, should_use_local_or_download};
+use crate::util::{mark_checked_once, remove_all_files_except, should_use_local_or_download};
 
 pub(crate) const PROXY_INSTALL_PATH: &str = "proxy-bin";
 pub(crate) const GITHUB_REPO: &str = "zed-extensions/java";
@@ -65,6 +65,7 @@ pub(crate) fn download_binary(
     binary: &str,
 ) -> zed::Result<String> {
     // 1. Respect check_updates setting (Never/Once/Always)
+    let mut allow_download = false;
     match should_use_local_or_download(configuration, find_latest_local(binary), PROXY_INSTALL_PATH)
     {
         Ok(Some(path)) => {
@@ -72,57 +73,58 @@ pub(crate) fn download_binary(
             *cached = Some(s.clone());
             return Ok(s);
         }
-        Ok(None) => { /* policy allows download, continue */ }
+        Ok(None) => {
+            allow_download = true;
+        }
         Err(_) => {
-            // Never/Once with no managed install — fall through to PATH as last resort
+            // Never/Once with no managed install — fall through to PATH / cached fallbacks
         }
     }
 
     // 2. Auto-download from GitHub releases
-    if let Ok((name, file_type)) = asset_name(binary)
-        && let Ok(release) = zed::latest_github_release(
-            GITHUB_REPO,
-            GithubReleaseOptions {
-                require_assets: true,
-                pre_release: false,
-            },
-        )
-    {
-        let bin_path = format!(
-            "{}/{}/{}",
-            PROXY_INSTALL_PATH,
-            release.version,
-            binary_exec(binary)
-        );
-
-        if metadata(&bin_path).is_ok() {
-            *cached = Some(bin_path.clone());
-            return Ok(bin_path);
-        }
-
-        if let Some(asset) = release.assets.iter().find(|a| a.name == name) {
-            let version_dir = format!("{PROXY_INSTALL_PATH}/{}", release.version);
-
-            set_language_server_installation_status(
-                language_server_id,
-                &LanguageServerInstallationStatus::Downloading,
+    if allow_download
+        && let Ok((name, file_type)) = asset_name(binary)
+            && let Ok(release) = zed::latest_github_release(
+                GITHUB_REPO,
+                GithubReleaseOptions {
+                    require_assets: true,
+                    pre_release: false,
+                },
+            )
+        {
+            let bin_path = format!(
+                "{}/{}/{}",
+                PROXY_INSTALL_PATH,
+                release.version,
+                binary_exec(binary)
             );
 
-            if zed::download_file(&asset.download_url, &version_dir, file_type).is_ok() {
-                let _ = zed::make_file_executable(&bin_path);
-                set_language_server_installation_status(
-                    language_server_id,
-                    &LanguageServerInstallationStatus::None,
-                );
-                // Do not remove other files if we are downloading one of multiple binaries
-                // but for now they are in the same version dir.
-                // let _ = remove_all_files_except(PROXY_INSTALL_PATH, &release.version);
-                let _ = mark_checked_once(PROXY_INSTALL_PATH, &release.version);
+            if metadata(&bin_path).is_ok() {
                 *cached = Some(bin_path.clone());
                 return Ok(bin_path);
             }
+
+            if let Some(asset) = release.assets.iter().find(|a| a.name == name) {
+                let version_dir = format!("{PROXY_INSTALL_PATH}/{}", release.version);
+
+                set_language_server_installation_status(
+                    language_server_id,
+                    &LanguageServerInstallationStatus::Downloading,
+                );
+
+                if zed::download_file(&asset.download_url, &version_dir, file_type).is_ok() {
+                    let _ = zed::make_file_executable(&bin_path);
+                    set_language_server_installation_status(
+                        language_server_id,
+                        &LanguageServerInstallationStatus::None,
+                    );
+                    let _ = remove_all_files_except(PROXY_INSTALL_PATH, &release.version);
+                    let _ = mark_checked_once(PROXY_INSTALL_PATH, &release.version);
+                    *cached = Some(bin_path.clone());
+                    return Ok(bin_path);
+                }
+            }
         }
-    }
 
     // 3. Fallback: local install (covers "always" mode when download fails)
     if let Some(path) = find_latest_local(binary) {
