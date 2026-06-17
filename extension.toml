@@ -21,6 +21,7 @@ name = "Eclipse JDT Language Server"
 language = "Java"
 
 [debug_adapters.Java]
+[debug_locators.java]
 
 [[capabilities]]
 kind = "process:exec"

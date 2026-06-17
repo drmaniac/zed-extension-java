@@ -28,6 +28,10 @@ struct JavaDebugLaunchConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     main_class: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    test_class: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    test_method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     args: Option<ArgsStringOrList>,
     #[serde(skip_serializing_if = "Option::is_none")]
     vm_args: Option<ArgsStringOrList>,
@@ -257,7 +261,12 @@ impl Debugger {
         })
     }
 
-    pub fn inject_config(&self, worktree: &Worktree, config_string: String) -> zed::Result<String> {
+    pub fn inject_config(
+        &self,
+        worktree: &Worktree,
+        config_string: String,
+        extra_classpaths: Option<Vec<String>>,
+    ) -> zed::Result<String> {
         let config: Value = serde_json::from_str(&config_string)
             .map_err(|err| format!("Failed to parse debug config: {err}"))?;
 
@@ -274,7 +283,11 @@ impl Debugger {
 
         let workspace_folder = worktree.root_path();
 
-        let (main_class, project_name) = {
+        // When testClass is set, mainClass is RemoteTestRunner which doesn't exist
+        // in the workspace. Skip main class resolution and use the values directly.
+        let (main_class, project_name) = if config.test_class.is_some() {
+            (config.main_class.clone(), config.project_name.clone())
+        } else {
             let arguments = [config.main_class.clone(), config.project_name.clone()]
                 .iter()
                 .flatten()
@@ -305,7 +318,7 @@ impl Debugger {
             }
 
             match entries.first() {
-                None => (config.main_class, config.project_name),
+                None => (config.main_class.clone(), config.project_name.clone()),
                 Some(entry) => (
                     Some(entry.main_class.to_owned()),
                     Some(entry.project_name.to_owned()),
@@ -332,12 +345,25 @@ impl Debugger {
                 }
             };
 
-            let arguments = vec![main_class.clone(), project_name.clone(), scope.clone()];
+            // Use testClass for classpath resolution when running tests.
+            // resolve_class_path validates the class exists in the workspace,
+            // so we must pass the test class (not RemoteTestRunner).
+            let class_for_path = config.test_class.clone().or_else(|| main_class.clone());
+            let arguments = vec![class_for_path.clone(), project_name.clone(), scope.clone()];
 
-            let result = lsp::resolve_class_path(&workspace_folder, arguments)
-                .map_err(|err| format!("Failed to resolve classpath: {err}"))?;
+            let mut result = lsp::resolve_class_path(&workspace_folder, arguments);
 
-            for resolved in result {
+            if result.is_err() && project_name.is_some() {
+                let fallback_arguments = vec![class_for_path, None, scope.clone()];
+                if let Ok(fallback_result) = lsp::resolve_class_path(&workspace_folder, fallback_arguments) {
+                    result = Ok(fallback_result);
+                }
+            }
+
+            let resolved_paths =
+                result.map_err(|err| format!("Failed to resolve classpath: {err}"))?;
+
+            for resolved in resolved_paths {
                 classpaths.extend(resolved);
             }
         }
@@ -345,12 +371,28 @@ impl Debugger {
         classpaths.retain(|class| !SCOPES.contains(&class.as_str()));
         classpaths.dedup();
 
+        // Append extra classpaths (e.g. test-runner jars) after resolution
+        if let Some(extra) = extra_classpaths {
+            classpaths.extend(extra);
+            classpaths.dedup();
+        }
+
         config.class_paths = Some(classpaths);
 
         config.main_class = main_class;
         config.project_name = project_name;
 
         config.cwd = config.cwd.or(Some(workspace_folder.to_string()));
+
+        // Use internal console to avoid terminal subprocess detection issues
+        // that cause "failed to find Java subProcess of shell pid" errors
+        config.console = config.console.or(Some("internalConsole".to_string()));
+
+        // Clear testClass/testMethod before serializing — the Microsoft debugger
+        // doesn't understand these fields. We've set mainClass to RemoteTestRunner
+        // with test selectors in args.
+        config.test_class = None;
+        config.test_method = None;
 
         let config = serde_json::to_string(&config)
             .map_err(|err| format!("Failed to stringify debug config: {err}"))?

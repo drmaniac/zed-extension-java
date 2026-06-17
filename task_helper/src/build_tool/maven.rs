@@ -95,9 +95,13 @@ impl BuildTool for Maven {
         };
 
         let debug_arg = if is_debug() {
-            " -Dmaven.surefire.debug"
+            format!(
+                " -Dmaven.surefire.debug=\"{}\" -Dmaven.failsafe.debug=\"{}\"",
+                get_jdwp_args(),
+                get_jdwp_args()
+            )
         } else {
-            ""
+            "".to_string()
         };
 
         if let Some(m) = module {
@@ -144,9 +148,13 @@ impl BuildTool for Maven {
         };
 
         let debug_arg = if is_debug() {
-            " -Dmaven.surefire.debug"
+            format!(
+                " -Dmaven.surefire.debug=\"{}\" -Dmaven.failsafe.debug=\"{}\"",
+                get_jdwp_args(),
+                get_jdwp_args()
+            )
         } else {
-            ""
+            "".to_string()
         };
 
         if let Some(m) = module {
@@ -177,9 +185,13 @@ impl BuildTool for Maven {
         let command = which_wrapper(&self.root, "mvn");
         let module = self.find_module(file);
         let debug_arg = if is_debug() {
-            " -Dmaven.surefire.debug"
+            format!(
+                " -Dmaven.surefire.debug=\"{}\" -Dmaven.failsafe.debug=\"{}\"",
+                get_jdwp_args(),
+                get_jdwp_args()
+            )
         } else {
-            ""
+            "".to_string()
         };
 
         if let Some(m) = module {
