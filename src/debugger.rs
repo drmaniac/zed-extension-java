@@ -261,12 +261,7 @@ impl Debugger {
         })
     }
 
-    pub fn inject_config(
-        &self,
-        worktree: &Worktree,
-        config_string: String,
-        extra_classpaths: Option<Vec<String>>,
-    ) -> zed::Result<String> {
+    pub fn inject_config(&self, worktree: &Worktree, config_string: String) -> zed::Result<String> {
         let config: Value = serde_json::from_str(&config_string)
             .map_err(|err| format!("Failed to parse debug config: {err}"))?;
 
@@ -355,7 +350,9 @@ impl Debugger {
 
             if result.is_err() && project_name.is_some() {
                 let fallback_arguments = vec![class_for_path, None, scope.clone()];
-                if let Ok(fallback_result) = lsp::resolve_class_path(&workspace_folder, fallback_arguments) {
+                if let Ok(fallback_result) =
+                    lsp::resolve_class_path(&workspace_folder, fallback_arguments)
+                {
                     result = Ok(fallback_result);
                 }
             }
@@ -370,12 +367,6 @@ impl Debugger {
 
         classpaths.retain(|class| !SCOPES.contains(&class.as_str()));
         classpaths.dedup();
-
-        // Append extra classpaths (e.g. test-runner jars) after resolution
-        if let Some(extra) = extra_classpaths {
-            classpaths.extend(extra);
-            classpaths.dedup();
-        }
 
         config.class_paths = Some(classpaths);
 

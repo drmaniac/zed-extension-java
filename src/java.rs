@@ -178,7 +178,7 @@ impl Extension for Java {
                 configuration: self
                     .jdtls_server
                     .debugger
-                    .inject_config(worktree, config_str, None)
+                    .inject_config(worktree, config_str)
                     .map_err(|err| format!("Failed to inject debug configuration: {err}"))?,
             },
             connection: Some(zed::resolve_tcp_template(
@@ -298,8 +298,12 @@ impl Extension for Java {
             .unwrap_or(5005);
 
         let mut build_template = template.clone();
-        build_template.env.push(("ZED_JAVA_DEBUG".to_string(), "1".to_string()));
-        build_template.env.push(("ZED_JAVA_DEBUG_PORT".to_string(), port.to_string()));
+        build_template
+            .env
+            .push(("ZED_JAVA_DEBUG".to_string(), "1".to_string()));
+        build_template
+            .env
+            .push(("ZED_JAVA_DEBUG_PORT".to_string(), port.to_string()));
 
         let debug_config = json!({
             "request": "attach",
@@ -335,9 +339,7 @@ impl Extension for Java {
         _locator_name: String,
         _template: TaskTemplate,
     ) -> zed_extension_api::Result<DebugRequest, String> {
-        Ok(DebugRequest::Attach(
-            AttachRequest { process_id: None },
-        ))
+        Ok(DebugRequest::Attach(AttachRequest { process_id: None }))
     }
 }
 
@@ -470,17 +472,20 @@ fn resolve_fqcn_via_lsp(
         return None;
     }
 
-    let symbols: Vec<LspWorkspaceSymbol> =
-        match lsp::request(workspace, "workspace/symbol", json!({ "query": outer_class_name })) {
-            Ok(syms) => syms,
-            Err(e) => {
-                eprintln!(
-                    "[DAP] resolve_fqcn_via_lsp: workspace/symbol request failed: {:?}",
-                    e
-                );
-                return None;
-            }
-        };
+    let symbols: Vec<LspWorkspaceSymbol> = match lsp::request(
+        workspace,
+        "workspace/symbol",
+        json!({ "query": outer_class_name }),
+    ) {
+        Ok(syms) => syms,
+        Err(e) => {
+            eprintln!(
+                "[DAP] resolve_fqcn_via_lsp: workspace/symbol request failed: {:?}",
+                e
+            );
+            return None;
+        }
+    };
 
     eprintln!(
         "[DAP] resolve_fqcn_via_lsp: symbols found count={}",
